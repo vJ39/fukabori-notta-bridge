@@ -1,7 +1,13 @@
+const LOG_PREFIX = '[fukabori-notta-bridge:fukabori]';
+
 (function main() {
   const audioUrl = findAudioUrl();
-  if (!audioUrl) return; // エピソードページ以外(トップページ等)では何もしない
+  if (!audioUrl) {
+    log('このページに音声URLが見つからないためボタンを表示しません', location.href);
+    return; // エピソードページ以外(トップページ等)では何もしない
+  }
 
+  log('音声URLを検出', audioUrl);
   injectButton(audioUrl, findEpisodeTitle());
 })();
 
@@ -45,18 +51,26 @@ function injectButton(audioUrl, title) {
   button.addEventListener('click', async () => {
     button.disabled = true;
     button.textContent = '送信中...';
+    log('ボタン押下', { audioUrl, title });
     try {
       const response = await chrome.runtime.sendMessage({ type: 'SEND_TO_NOTTA', audioUrl, title });
+      log('background応答', response);
       button.textContent = response?.ok ? '送信しました' : `失敗: ${response?.error ?? '不明なエラー'}`;
     } catch (error) {
-      button.textContent = `失敗: ${error?.message ?? error}`;
+      // service workerが起動していない/クラッシュしている場合などはここに来る
+      console.error(LOG_PREFIX, 'background呼び出し自体が失敗', error);
+      button.textContent = `失敗(拡張との通信エラー): ${error?.message ?? error}`;
     } finally {
       setTimeout(() => {
         button.disabled = false;
         button.textContent = defaultLabel;
-      }, 5000);
+      }, 8000);
     }
   });
 
   document.body.appendChild(button);
+}
+
+function log(...args) {
+  console.log(LOG_PREFIX, ...args);
 }

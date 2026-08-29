@@ -53,3 +53,14 @@ fukabori.fmのエピソードページから、音声ファイルのダウンロ
 ## 動作しないケース(既知の制約)
 - Notta側の画面構成が変わった場合、アップロード自動化は失敗する(手動アップロードへのフォールバック導線は用意していない v0.1時点)
 - 1エピソードが非常に大きい(1GB超など)場合の動作は未検証
+
+## デバッグ方法
+アップロードが動かない/失敗する場合、以下3箇所のログを確認する。すべて `[fukabori-notta-bridge:*]` プレフィックス付きで出力される。
+
+1. **background.js (service worker)のログ**: `chrome://extensions` → 本拡張の「Service Worker」リンクをクリックしてDevToolsを開く → Consoleタブ。ダウンロード開始・Nottaタブの検出/作成・content scriptへの送信リトライ状況が出る
+2. **fukabori.fmページのログ**: エピソードページでF12 → Consoleタブ。ボタン押下時のbackground応答が出る
+3. **Nottaタブのログ**: Nottaのタブ上でF12 → Consoleタブ。音声取得・アップロード欄の探索状況・実際にセットした要素が出る
+
+`uploadAudio`はファイルを`input.files`にセットする、またはドロップイベントを発火するところまでしか保証しない。Notta側の画面に実際にファイル名やプログレスバーが表示されたかは目視で確認すること(この拡張はNotta内部の状態までは検知していない)。
+
+セレクタが外れている場合は、Nottaタブのログに `アップロード対象要素を検出` が出ずに `Nottaのアップロード欄が見つかりませんでした` エラーになる。その場合は実際のNottaのアップロード画面でinput[type=file]やドロップゾーンのクラス名・data属性をDevTools要素選択で確認し、`src/content-notta.js`の`NOTTA_FILE_INPUT_SELECTOR`/`NOTTA_DROPZONE_SELECTOR`/`IMPORT_TRIGGER_TEXTS`を実際の値に差し替える。
