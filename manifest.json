@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "fukabori.fm to Notta bridge",
+  "version": "0.1.0",
+  "description": "fukabori.fmのエピソード音声をダウンロードし、Nottaへ自動アップロードして文字起こしを開始する",
+  "permissions": ["downloads", "tabs", "scripting"],
+  "host_permissions": [
+    "https://fukabori.fm/*",
+    "https://app.notta.ai/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://fukabori.fm/*"],
+      "js": ["src/content-fukabori.js"]
+    },
+    {
+      "matches": ["https://app.notta.ai/*"],
+      "js": ["src/content-notta.js"]
+    }
+  ],
+  "action": {
+    "default_title": "fukabori.fm to Notta bridge"
+  }
+}
