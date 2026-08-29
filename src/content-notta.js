@@ -1,11 +1,13 @@
-// NOTE: 以下2つのセレクタは実機未検証の暫定値。
-// Notta Web版に実際にログインした状態でアップロード画面のDOMを確認し、
-// 正しいセレクタに差し替えること(docs/spec.md の「未検証・要確認事項」参照)。
+// NOTE: input/dropzoneのセレクタは実機未検証の暫定値のまま残しているが、
+// 実機確認の結果、Nottaは「アップロード」というテキストを持つボタン(内部はReact製で
+// テキストは子のdiv(class名はCSS Modulesのハッシュ付き)に入っており、button自体には
+// クラス名以外の目印がない)を押すとアップロードUIが開く構成と判明した
+// (2026-08-29 実機のHTML: <div class="btn_label__rTH7K btn_label">アップロード</div>)。
+// そのため、クリック対象探索は「button/a/role=buttonに限定したセレクタ」ではなく、
+// テキストを持つ末端要素からclosest()でクリック可能な祖先を辿る方式にしている。
 const NOTTA_FILE_INPUT_SELECTOR = 'input[type="file"]';
 const NOTTA_DROPZONE_SELECTOR = '[data-testid="upload-dropzone"], .upload-dropzone';
-// ホーム画面に直接アップロード欄が無く、まず「インポート」的なボタンを押して
-// モーダルを開く必要がある構成を想定したフォールバック探索用の文言。
-const IMPORT_TRIGGER_TEXTS = ['インポート', 'Import', 'ファイルをアップロード', 'アップロード', 'Upload'];
+const IMPORT_TRIGGER_TEXTS = ['アップロード', 'インポート', 'Upload', 'Import', 'ファイルをアップロード'];
 
 const LOG_PREFIX = '[fukabori-notta-bridge:notta]';
 const INITIAL_TARGET_TIMEOUT_MS = 3000;
@@ -37,21 +39,21 @@ async function uploadAudio(audioUrl, filename) {
   let target = await findUploadTarget(INITIAL_TARGET_TIMEOUT_MS);
 
   if (!target) {
-    log('直接は見つからず。インポート系ボタンを探索します');
+    log('直接は見つからず。「アップロード」等のテキストを持つボタンを探索します');
     const trigger = findClickableByText(IMPORT_TRIGGER_TEXTS);
     if (trigger) {
-      log('トリガー要素をクリック', { text: trigger.textContent?.trim() });
+      log('トリガー要素をクリック', { text: trigger.textContent?.trim(), el: describe(trigger) });
       trigger.click();
       await sleep(1000);
     } else {
-      log('インポート系ボタンも見つかりませんでした');
+      log('該当テキストのボタンも見つかりませんでした');
     }
     target = await findUploadTarget(AFTER_TRIGGER_TARGET_TIMEOUT_MS);
   }
 
   if (!target) {
     throw new Error(
-      'Nottaのアップロード欄が見つかりませんでした(input[type=file]・ドロップゾーン・インポートボタンいずれも未検出)。' +
+      'Nottaのアップロード欄が見つかりませんでした(input[type=file]・ドロップゾーン・アップロードボタンいずれも未検出)。' +
         'F12コンソールのログと合わせてセレクタの調整が必要です'
     );
   }
@@ -71,15 +73,21 @@ async function uploadAudio(audioUrl, filename) {
 async function findUploadTarget(timeoutMs) {
   const input = await waitForElement(NOTTA_FILE_INPUT_SELECTOR, timeoutMs).catch(() => null);
   if (input) return input;
-  return waitForElement(NOTTA_DROPZONE_SELECTOR, Math.min(timeoutMs, 3000)).catch(() => null);
+  return waitForElement(NOTTA_DROPZONE_SELECTOR, 1500).catch(() => null);
 }
 
+// テキストを持つ「最も内側の要素」(子要素を持たない要素)を探し、
+// そこからクリック可能そうな祖先要素(button/a/role=button)を辿って返す。
+// 見つからなければテキストを持つ要素自体を返す(Reactのイベント委譲でクリックがbubbleし親のonClickまで届くため、
+// button自体を掴めなくても子のdivをclick()すれば動作することが多い)。
 function findClickableByText(texts) {
-  const candidates = document.querySelectorAll('button, a, [role="button"]');
-  for (const el of candidates) {
+  const allElements = document.querySelectorAll('body *');
+  for (const el of allElements) {
+    if (el.children.length > 0) continue; // 末端要素のみ対象(コンテナの誤検出を避ける)
     const text = (el.textContent || '').trim();
-    if (!text) continue;
-    if (texts.some((t) => text.includes(t))) return el;
+    if (!text || text.length > 30) continue;
+    if (!texts.some((t) => text === t || text.includes(t))) continue;
+    return el.closest('button, a, [role="button"]') || el;
   }
   return null;
 }
