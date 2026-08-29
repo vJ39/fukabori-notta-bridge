@@ -1,6 +1,6 @@
 importScripts('lib/filename.js'); // sanitizeFilenameを提供(src/lib/filename.js)
 
-const NOTTA_HOME_URL = 'https://app.notta.ai/home';
+const NOTTA_HOME_URL = 'https://app.notta.ai/'; // ログイン済みなら実際のワークスペースID付きダッシュボードURLへNotta側でクライアントリダイレクトされる
 const NOTTA_URL_PATTERN = 'https://app.notta.ai/*';
 const LOG_PREFIX = '[fukabori-notta-bridge:bg]';
 const DOWNLOAD_COMPLETE_TIMEOUT_MS = 20000;
