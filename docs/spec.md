@@ -24,6 +24,11 @@ fukabori.fmのエピソードページから、音声ファイルのダウンロ
 
 ## 構成要素
 
+### src/lib/filename.js (共有ロジック)
+- `sanitizeFilename(name)`: ダウンロード用ファイル名のサニタイズ処理。制御文字(改行・タブ含む)を空白に置換→OS予約文字(`\/:*?"<>|`)を`_`に置換→連続空白を1つに集約→前後空白トリム→末尾のピリオド・空白を除去(Windows制約)→150文字に切り詰め。全て除去されて空文字になった場合は`episode`にフォールバック
+- CommonJS(`module.exports`、テストから`require`)とクラシックスクリプト(`self.sanitizeFilename`、`importScripts()`で読み込み)の両方に対応させ、ビルド無しで背景スクリプトとNode両方から使えるようにしている
+- テスト: `test/filename.test.js` (`npm test` または `node --test`)
+
 ### content-fukabori.js (fukabori.fmに注入)
 - ページ内の`<audio>`要素のsrc、なければ`a[href$=".mp3"]`のhrefから音声URLを取得
 - エピソードタイトルを`<h1>`またはdocument.titleから取得
@@ -31,9 +36,9 @@ fukabori.fmのエピソードページから、音声ファイルのダウンロ
 - ボタン押下でbackgroundへ`SEND_TO_NOTTA`メッセージを送信し、結果をボタンのラベルに反映
 
 ### background.js (service worker)
-- `SEND_TO_NOTTA`受信時:
-  1. `chrome.downloads.download`でローカル保存(ファイル名はエピソードタイトルをサニタイズしたもの、保存先フォルダは`fukabori.fm/`配下)
-  2. 既存のNottaタブを探す。なければ新規タブで`https://app.notta.ai/home`を開き、読み込み完了を待つ
+- `SEND_TO_NOTTA`受信時、ダウンロードとNotta送信を独立したステップとして両方試みる(Notta側は自分でaudioUrlをfetchするため、ローカル保存が失敗してもNotta送信は続行する)。それぞれの成否・エラー内容を`{ download: {ok, error?}, notta: {ok, error?} }`として呼び出し元に返す
+  1. `chrome.downloads.download`でローカル保存(ファイル名は`sanitizeFilename`で処理したもの、保存先フォルダは`fukabori.fm/`配下)。`chrome.downloads.onChanged`で実際の完了/中断まで監視し、中断時は理由を返す
+  2. 既存のNottaタブを探す。なければ新規タブで`https://app.notta.ai/home`を開き、読み込み完了を待つ(ログイン画面へのリダイレクトも検知してログに出す)
   3. Notta側content scriptへ`UPLOAD_AUDIO`メッセージを送信(未注入の場合を考慮しリトライ)
 
 ### content-notta.js (app.notta.aiに注入)
@@ -53,6 +58,9 @@ fukabori.fmのエピソードページから、音声ファイルのダウンロ
 ## 動作しないケース(既知の制約)
 - Notta側の画面構成が変わった場合、アップロード自動化は失敗する(手動アップロードへのフォールバック導線は用意していない v0.1時点)
 - 1エピソードが非常に大きい(1GB超など)場合の動作は未検証
+
+## 既知の不具合(修正済み)
+- **ダウンロードが`Invalid filename`で失敗する**: `<h1>`のtextContentにHTML整形上の改行・インデント空白が混入し、`chrome.downloads.download`のfilenameに制御文字が渡っていたことが原因。`sanitizeFilename`で制御文字を空白に置換するよう修正(空文字への置換だと隣接文字がくっついてしまうバグも合わせて修正、テストで検出)
 
 ## デバッグ方法
 アップロードが動かない/失敗する場合、以下3箇所のログを確認する。すべて `[fukabori-notta-bridge:*]` プレフィックス付きで出力される。

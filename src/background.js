@@ -1,16 +1,17 @@
+importScripts('lib/filename.js'); // sanitizeFilenameを提供(src/lib/filename.js)
+
 const NOTTA_HOME_URL = 'https://app.notta.ai/home';
 const NOTTA_URL_PATTERN = 'https://app.notta.ai/*';
 const LOG_PREFIX = '[fukabori-notta-bridge:bg]';
+const DOWNLOAD_COMPLETE_TIMEOUT_MS = 20000;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'SEND_TO_NOTTA') return false;
 
-  handleSendToNotta(message.audioUrl, message.title)
-    .then(() => sendResponse({ ok: true }))
-    .catch((error) => {
-      console.error(LOG_PREFIX, '処理失敗:', error);
-      sendResponse({ ok: false, error: String(error?.message ?? error) });
-    });
+  handleSendToNotta(message.audioUrl, message.title).then((result) => {
+    log('最終結果', result);
+    sendResponse({ ok: result.download.ok && result.notta.ok, ...result });
+  });
 
   return true; // 非同期でsendResponseを呼ぶことを示す
 });
@@ -19,26 +20,74 @@ async function handleSendToNotta(audioUrl, title) {
   log('開始', { audioUrl, title });
   const baseName = sanitizeFilename(title);
 
-  await downloadLocally(audioUrl, `fukabori.fm/${baseName}.mp3`);
+  // ダウンロードとNotta送信は互いに独立(Notta側は自分でaudioUrlをfetchするため、
+  // ローカル保存が失敗してもNotta送信は試みる)。両方の結果を別々に返す。
+  const download = await tryDownloadLocally(audioUrl, `fukabori.fm/${baseName}.mp3`);
+  const notta = await tryUploadToNotta(audioUrl, `${baseName}.mp3`);
+  return { download, notta };
+}
 
-  const tabId = await openOrFocusNottaTab();
-  log('Nottaタブ確定', { tabId });
+async function tryDownloadLocally(url, filename) {
+  try {
+    const downloadId = await downloadLocally(url, filename);
+    return { ok: true, downloadId };
+  } catch (error) {
+    console.error(LOG_PREFIX, 'ダウンロード失敗:', error);
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
 
-  await sendUploadJobWithRetry(tabId, { type: 'UPLOAD_AUDIO', audioUrl, filename: `${baseName}.mp3` });
-  log('Notta側へのアップロード指示が完了応答を返しました');
+async function tryUploadToNotta(audioUrl, filename) {
+  try {
+    const tabId = await openOrFocusNottaTab();
+    log('Nottaタブ確定', { tabId });
+    await sendUploadJobWithRetry(tabId, { type: 'UPLOAD_AUDIO', audioUrl, filename });
+    return { ok: true };
+  } catch (error) {
+    console.error(LOG_PREFIX, 'Notta送信失敗:', error);
+    return { ok: false, error: String(error?.message ?? error) };
+  }
 }
 
 function downloadLocally(url, filename) {
   return new Promise((resolve, reject) => {
-    chrome.downloads.download({ url, filename, conflictAction: 'uniquify' }, (downloadId) => {
-      if (chrome.runtime.lastError) {
-        log('ローカル保存に失敗', chrome.runtime.lastError.message);
-        reject(new Error(`ダウンロード失敗: ${chrome.runtime.lastError.message}`));
+    chrome.downloads.download({ url, filename, conflictAction: 'uniquify', saveAs: false }, (downloadId) => {
+      if (chrome.runtime.lastError || downloadId === undefined) {
+        const reason = chrome.runtime.lastError?.message ?? 'downloadIdが返りませんでした(ファイル名が不正な可能性)';
+        log('ローカル保存の開始に失敗', reason);
+        reject(new Error(reason));
         return;
       }
-      log('ローカル保存を開始', { downloadId, filename });
-      resolve(downloadId);
+      log('ローカル保存を開始', { downloadId, filename, url });
+      watchDownloadCompletion(downloadId).then(resolve, reject);
     });
+  });
+}
+
+function watchDownloadCompletion(downloadId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.downloads.onChanged.removeListener(listener);
+      log('ダウンロード完了確認がタイムアウトしました(バックグラウンドで継続中の可能性)', { downloadId });
+      resolve(downloadId);
+    }, DOWNLOAD_COMPLETE_TIMEOUT_MS);
+
+    function listener(delta) {
+      if (delta.id !== downloadId) return;
+      if (delta.state?.current === 'complete') {
+        clearTimeout(timer);
+        chrome.downloads.onChanged.removeListener(listener);
+        log('ダウンロード完了', { downloadId });
+        resolve(downloadId);
+      } else if (delta.state?.current === 'interrupted') {
+        clearTimeout(timer);
+        chrome.downloads.onChanged.removeListener(listener);
+        const reason = delta.error?.current ?? '不明なエラー';
+        log('ダウンロードが中断されました', { downloadId, reason });
+        reject(new Error(reason));
+      }
+    }
+    chrome.downloads.onChanged.addListener(listener);
   });
 }
 
@@ -102,13 +151,6 @@ async function sendUploadJobWithRetry(tabId, message, retries = 15, intervalMs =
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function sanitizeFilename(name) {
-  return String(name)
-    .replace(/[\\/:*?"<>|]/g, '_')
-    .trim()
-    .slice(0, 150);
 }
 
 function log(...args) {

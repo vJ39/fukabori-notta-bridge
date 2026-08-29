@@ -1,0 +1,9 @@
+{
+  "name": "fukabori-notta-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "fukabori.fmのエピソード音声をダウンロードし、Nottaへ自動アップロードして文字起こしを開始するChrome拡張",
+  "scripts": {
+    "test": "node --test"
+  }
+}
